@@ -1,5 +1,5 @@
 classdef ExhaustAnalyzer < matlab.apps.AppBase
-    % ExhaustAnalyzer - Acoustic measurement and spectral analysis tool
+    % ExhaustAnalyzer  Acoustic measurement and spectral analysis tool
     %
     % Launch:  app = ExhaustAnalyzer;
 
@@ -55,6 +55,18 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
         LiveYMaxLabel           matlab.ui.control.Label
         LiveAutoYCheckbox       matlab.ui.control.CheckBox
         ClearPeaksButton        matlab.ui.control.Button
+
+        % Sound level meter panel and display elements
+        SPLMeterPanel           matlab.ui.container.Panel
+        SPLCurrentLabel         matlab.ui.control.Label
+        SPLValueLabel           matlab.ui.control.Label
+        SPLPeakLabel            matlab.ui.control.Label
+        SPLPeakValueLabel       matlab.ui.control.Label
+        SPLMinLabel             matlab.ui.control.Label
+        SPLMinValueLabel        matlab.ui.control.Label
+        SPLWeightingDropdown    matlab.ui.control.DropDown
+        SPLWeightingLabel       matlab.ui.control.Label
+        SPLResetPeakButton      matlab.ui.control.Button
 
         SamplePanel             matlab.ui.container.Panel
         SampleListBox           matlab.ui.control.ListBox
@@ -121,12 +133,16 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
         PeakHoldData            double
         SmoothedFFT             double
 
-        % Persistent plot handles -- updated in-place, never cla+replot
+        % Persistent plot handles, updated in-place to avoid cla and replot
         hWaveform                       % line handle for waveform
         hCursor                         % line handle for record cursor
         hFFTArea                        % area handle for live FFT
         hPeakLine                       % line handle for peak hold
-        LastNFFT                double = 0  % track FFT size changes
+        LastNFFT                double = 0  % tracks FFT size changes to reset smoothing
+
+        % Sound level meter state
+        SPLPeakValue            double = -Inf   % highest observed dB reading
+        SPLMinValue             double = Inf    % lowest observed dB reading
     end
 
     methods (Access = private)
@@ -140,13 +156,13 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
 
             app.TabGroup = uitabgroup(app.UIFigure, 'Position', [10 10 1320 830]);
 
-            %%   RECORD & MONITOR TAB
+            % Record and Monitor tab
             app.MonitorTab = uitab(app.TabGroup, 'Title', '  Record & Monitor  ', ...
                 'BackgroundColor', [0.18 0.18 0.20]);
 
             panelW = 320;
 
-            % --- Setup ---
+            % Audio device and recording setup panel
             app.SetupPanel = uipanel(app.MonitorTab, 'Title', 'Setup', ...
                 'Position', [12 555 panelW 200], ...
                 'BackgroundColor', [0.22 0.22 0.24], ...
@@ -199,7 +215,7 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
                 'FontWeight', 'bold', 'FontSize', 11, ...
                 'ButtonPushedFcn', @(~,~) startMonitorOnly(app));
 
-            % Status
+            % Recording status indicators
             app.RecordStatusLamp = uilamp(app.MonitorTab, ...
                 'Position', [15 530 14 14], 'Color', [0.4 0.4 0.4]);
             app.RecordStatusLabel = uilabel(app.MonitorTab, 'Text', 'Idle', ...
@@ -208,7 +224,7 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
                 'Position', [100 528 235 20], 'FontColor', [0.9 0.85 0.6], ...
                 'FontWeight', 'bold', 'FontSize', 11);
 
-            % --- Mic Cal ---
+            % Microphone frequency response calibration panel
             app.CalPanel = uipanel(app.MonitorTab, 'Title', 'Mic Calibration', ...
                 'Position', [12 420 panelW 105], ...
                 'BackgroundColor', [0.22 0.22 0.24], ...
@@ -227,7 +243,7 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
                 'Text', 'Apply to all displays', 'Value', true, ...
                 'Position', [10 8 180 22], 'FontColor', [0.85 0.85 0.85]);
 
-            % --- SPL Cal ---
+            % SPL reference calibration panel
             app.SPLCalPanel = uipanel(app.MonitorTab, 'Title', 'SPL Calibration', ...
                 'Position', [12 325 panelW 90], ...
                 'BackgroundColor', [0.22 0.22 0.24], ...
@@ -236,7 +252,7 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
             app.SPLRefLabel = uilabel(app.SPLCalPanel, 'Text', 'Ref dB:', ...
                 'Position', [10 38 45 22], 'FontColor', [0.85 0.85 0.85]);
             app.SPLRefSpinner = uispinner(app.SPLCalPanel, ...
-                'Value', 94, 'Limits', [70 130], 'Step', 0.1, ...
+                'Value', 94, 'Limits', [60 130], 'Step', 0.1, ...
                 'Position', [58 38 70 22]);
             app.SPLCalibrateButton = uibutton(app.SPLCalPanel, 'push', ...
                 'Text', 'Calibrate Now', 'Position', [138 36 115 26], ...
@@ -245,7 +261,7 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
             app.SPLStatusLabel = uilabel(app.SPLCalPanel, 'Text', 'Not calibrated (relative dBFS)', ...
                 'Position', [10 10 295 20], 'FontColor', [0.62 0.62 0.62], 'FontSize', 11);
 
-            % --- Live FFT Controls ---
+            % Live FFT display controls
             app.LiveFFTPanel = uipanel(app.MonitorTab, 'Title', 'Live FFT Controls', ...
                 'Position', [12 145 panelW 175], ...
                 'BackgroundColor', [0.22 0.22 0.24], ...
@@ -293,7 +309,45 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
             uilabel(app.LiveFFTPanel, 'Text', 'dB', ...
                 'Position', [256 yy 20 22], 'FontColor', [0.7 0.7 0.7]);
 
-            % --- Sample Manager ---
+            % Real-time sound level meter panel
+            app.SPLMeterPanel = uipanel(app.MonitorTab, 'Title', 'Sound Level (dB)', ...
+                'Position', [345 755 960 40+20], ...
+                'BackgroundColor', [0.20 0.20 0.22], ...
+                'ForegroundColor', [0.9 0.9 0.9], 'FontWeight', 'bold');
+
+            % Large current dB readout
+            app.SPLCurrentLabel = uilabel(app.SPLMeterPanel, 'Text', 'Level:', ...
+                'Position', [10 12 40 22], 'FontColor', [0.7 0.7 0.7], 'FontSize', 12);
+            app.SPLValueLabel = uilabel(app.SPLMeterPanel, 'Text', '--- dB', ...
+                'Position', [50 6 120 32], ...
+                'FontColor', [0.3 1.0 0.4], 'FontSize', 22, 'FontWeight', 'bold');
+
+            % Peak and minimum readouts
+            app.SPLPeakLabel = uilabel(app.SPLMeterPanel, 'Text', 'Peak:', ...
+                'Position', [175 12 35 22], 'FontColor', [0.7 0.7 0.7], 'FontSize', 11);
+            app.SPLPeakValueLabel = uilabel(app.SPLMeterPanel, 'Text', '--- dB', ...
+                'Position', [212 12 80 22], ...
+                'FontColor', [1.0 0.45 0.3], 'FontSize', 13, 'FontWeight', 'bold');
+
+            app.SPLMinLabel = uilabel(app.SPLMeterPanel, 'Text', 'Min:', ...
+                'Position', [300 12 30 22], 'FontColor', [0.7 0.7 0.7], 'FontSize', 11);
+            app.SPLMinValueLabel = uilabel(app.SPLMeterPanel, 'Text', '--- dB', ...
+                'Position', [332 12 80 22], ...
+                'FontColor', [0.5 0.7 1.0], 'FontSize', 13, 'FontWeight', 'bold');
+
+            % Frequency weighting selector for the level meter
+            app.SPLWeightingLabel = uilabel(app.SPLMeterPanel, 'Text', 'Weighting:', ...
+                'Position', [425 12 62 22], 'FontColor', [0.7 0.7 0.7], 'FontSize', 11);
+            app.SPLWeightingDropdown = uidropdown(app.SPLMeterPanel, ...
+                'Items', {'Z (Flat)','A','C'}, 'Value', 'A', ...
+                'Position', [490 12 80 22]);
+
+            % Reset button to clear peak and min values
+            app.SPLResetPeakButton = uibutton(app.SPLMeterPanel, 'push', ...
+                'Text', 'Reset', 'Position', [580 12 50 22], 'FontSize', 10, ...
+                'ButtonPushedFcn', @(~,~) resetSPLPeakMin(app));
+
+            % Sample manager panel
             app.SamplePanel = uipanel(app.MonitorTab, 'Title', 'Samples', ...
                 'Position', [12 5 panelW 135], ...
                 'BackgroundColor', [0.22 0.22 0.24], ...
@@ -321,23 +375,23 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
                 'BackgroundColor', [0.28 0.28 0.48], 'FontColor', 'w', ...
                 'ButtonPushedFcn', @(~,~) loadSession(app));
 
-            % --- Live Axes ---
+            % Live waveform and spectrum axes (positioned below the dB meter)
             axL = 345; axW = 960;
 
             app.WaveformAxes = uiaxes(app.MonitorTab, ...
-                'Position', [axL 440 axW 330]);
+                'Position', [axL 420 axW 320]);
             title(app.WaveformAxes, 'Waveform');
             xlabel(app.WaveformAxes, 'Time (s)'); ylabel(app.WaveformAxes, 'Amplitude');
             app.styleAxesDark(app.WaveformAxes);
 
             app.LiveFFTAxes = uiaxes(app.MonitorTab, ...
-                'Position', [axL 15 axW 405]);
+                'Position', [axL 15 axW 385]);
             title(app.LiveFFTAxes, 'Live Spectrum');
             xlabel(app.LiveFFTAxes, 'Frequency (Hz)'); ylabel(app.LiveFFTAxes, 'dBFS');
             app.LiveFFTAxes.XScale = 'log';
             app.styleAxesDark(app.LiveFFTAxes);
 
-            %%  ANALYSIS TAB
+            % FFT Analysis tab
             app.AnalysisTab = uitab(app.TabGroup, 'Title', '  FFT Analysis  ', ...
                 'BackgroundColor', [0.18 0.18 0.20]);
 
@@ -401,7 +455,7 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
             app.AnalysisAxes.XScale = 'log';
             app.styleAxesDark(app.AnalysisAxes);
 
-            %%  WATERFALL TAB
+            % Waterfall and Spectrogram tab
             app.WaterfallTab = uitab(app.TabGroup, 'Title', '  Waterfall / Spectrogram  ', ...
                 'BackgroundColor', [0.18 0.18 0.20]);
 
@@ -470,6 +524,7 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
             app.styleAxesDark(app.WFAxes);
         end
 
+        % Apply dark color scheme to any axes handle
         function styleAxesDark(~, ax)
             ax.Color = [0.12 0.12 0.14];
             ax.XColor = [0.7 0.7 0.7];
@@ -480,7 +535,7 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
             grid(ax, 'on');
         end
 
-        %%  DEVICES
+        % Enumerate available audio input devices and populate the dropdown
         function populateDevices(app)
             try
                 info = audiodevinfo();
@@ -497,6 +552,7 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
             end
         end
 
+        % Parse the selected device dropdown string and return the numeric device ID
         function id = getDeviceID(app)
             sel = app.DeviceDropdown.Value;
             if strcmp(sel, 'Default')
@@ -507,6 +563,7 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
             end
         end
 
+        % Create an audiorecorder object with the given sample rate and bit depth
         function rec = makeRecorder(app, fs, bits)
             devID = app.getDeviceID();
             if devID == -1
@@ -516,9 +573,9 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
             end
         end
 
-        %% INIT / LIVE PLOTS
+        % Initialise persistent plot handles for waveform and FFT so they can be
+        % updated in-place each timer tick instead of clearing and replotting
         function initLivePlots(app)
-            % Create persistent line handles once -- update data each tick
             cla(app.WaveformAxes);
             hold(app.WaveformAxes, 'on');
             app.hWaveform = plot(app.WaveformAxes, 0, 0, ...
@@ -543,9 +600,16 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
             title(app.LiveFFTAxes, 'Live Spectrum');
 
             app.LastNFFT = 0;
+
+            % Reset the sound level meter display
+            app.SPLPeakValue = -Inf;
+            app.SPLMinValue  = Inf;
+            app.SPLValueLabel.Text = '--- dB';
+            app.SPLPeakValueLabel.Text = '--- dB';
+            app.SPLMinValueLabel.Text = '--- dB';
         end
 
-        %% RECORD + MONITOR
+        % Begin a timed recording session, capturing audio for the configured duration
         function startRecording(app)
             if app.IsRecording || app.IsMonitoring, return; end
             fs = str2double(app.SampleRateDropdown.Value);
@@ -567,6 +631,7 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
             app.startLiveTimer();
         end
 
+        % Begin continuous monitoring without saving; useful for live level checking
         function startMonitorOnly(app)
             if app.IsRecording || app.IsMonitoring, return; end
             try
@@ -583,6 +648,7 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
             app.startLiveTimer();
         end
 
+        % Halt any active recording or monitoring and save the sample if recording
         function stopAll(app)
             wasRecording = app.IsRecording;
             app.IsRecording = false;
@@ -597,6 +663,7 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
             app.setUIState('idle');
         end
 
+        % Update button enable states and status lamp colour for current mode
         function setUIState(app, state)
             switch state
                 case 'recording'
@@ -622,6 +689,7 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
             end
         end
 
+        % Create and start a periodic timer that drives the live display updates
         function startLiveTimer(app)
             app.LiveTimer = timer('ExecutionMode', 'fixedRate', ...
                 'Period', 0.20, ...
@@ -630,6 +698,7 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
             start(app.LiveTimer);
         end
 
+        % Stop and destroy the live update timer
         function stopLiveTimer(app)
             if ~isempty(app.LiveTimer) && isvalid(app.LiveTimer)
                 stop(app.LiveTimer); delete(app.LiveTimer);
@@ -637,8 +706,8 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
             app.LiveTimer = [];
         end
 
+        % Timer callback: refresh waveform, FFT, and sound level meter each tick
         function liveUpdate(app)
-            % Early exit
             if ~app.IsRecording && ~app.IsMonitoring, return; end
 
             try
@@ -650,7 +719,7 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
 
             fs = app.Recorder.SampleRate;
 
-            % --- Check recording duration ---
+            % Auto-stop when the target recording duration has elapsed
             if app.IsRecording
                 elapsed = toc(app.RecordStartTime);
                 remaining = max(0, app.RecordDuration - elapsed);
@@ -663,7 +732,7 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
                 end
             end
 
-            % --- Update waveform by setting XData/YData ---
+            % Refresh the waveform plot by updating existing line handle data
             try
                 t = (0:length(data)-1)' / fs;
                 set(app.hWaveform, 'XData', t, 'YData', data);
@@ -681,7 +750,62 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
             catch
             end
 
-            % --- Live FFT ---
+            % Compute and display the real-time sound level in dB
+            try
+                % Use the most recent 0.125s of audio (fast time weighting)
+                blockLen = round(fs * 0.125);
+                if length(data) >= blockLen
+                    block = data(end-blockLen+1:end);
+                else
+                    block = data;
+                end
+
+                % Apply frequency weighting if selected
+                weightedBlock = app.applyWeighting(block, fs);
+
+                % Compute RMS level in dBFS, or dB SPL if calibrated
+                rmsVal = rms(weightedBlock);
+                levelDB = 20*log10(rmsVal + eps);
+                if app.SPLCalibrated
+                    levelDB = levelDB + app.SPLOffset;
+                end
+
+                % Update the numeric readout
+                app.SPLValueLabel.Text = sprintf('%.1f dB', levelDB);
+
+                % Colour the readout based on level intensity
+                if app.SPLCalibrated
+                    if levelDB > 85
+                        app.SPLValueLabel.FontColor = [1.0 0.2 0.2];
+                    elseif levelDB > 70
+                        app.SPLValueLabel.FontColor = [1.0 0.8 0.2];
+                    else
+                        app.SPLValueLabel.FontColor = [0.3 1.0 0.4];
+                    end
+                else
+                    if levelDB > -6
+                        app.SPLValueLabel.FontColor = [1.0 0.2 0.2];
+                    elseif levelDB > -20
+                        app.SPLValueLabel.FontColor = [1.0 0.8 0.2];
+                    else
+                        app.SPLValueLabel.FontColor = [0.3 1.0 0.4];
+                    end
+                end
+
+                % Track peak and minimum levels across the session
+                if levelDB > app.SPLPeakValue
+                    app.SPLPeakValue = levelDB;
+                    app.SPLPeakValueLabel.Text = sprintf('%.1f dB', levelDB);
+                end
+                if levelDB < app.SPLMinValue && rmsVal > 1e-10
+                    app.SPLMinValue = levelDB;
+                    app.SPLMinValueLabel.Text = sprintf('%.1f dB', levelDB);
+                end
+
+            catch
+            end
+
+            % Compute and display the live FFT spectrum
             try
                 nfft = str2double(app.LiveFFTSizeDropdown.Value);
                 if length(data) < nfft, return; end
@@ -697,17 +821,17 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
                     mag = mag + app.getCalCorrection(f);
                 end
 
-                % Trim DC bin
+                % Remove the DC bin for display
                 f = f(2:end); mag = mag(2:end);
 
-                % If FFT size changed, reset smoothing/peaks
+                % Reset smoothing and peak data when the FFT size changes
                 if nfft ~= app.LastNFFT
                     app.SmoothedFFT = mag;
                     app.PeakHoldData = mag;
                     app.LastNFFT = nfft;
                 end
 
-                % Decay smoothing
+                % Exponentially weighted moving average for visual smoothing
                 alpha = app.getDecayAlpha();
                 if isempty(app.SmoothedFFT) || length(app.SmoothedFFT) ~= length(mag)
                     app.SmoothedFFT = mag;
@@ -715,7 +839,7 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
                     app.SmoothedFFT = alpha * mag + (1-alpha) * app.SmoothedFFT;
                 end
 
-                % Peak hold
+                % Maintain peak hold envelope across FFT frames
                 if app.LivePeakHoldCheckbox.Value
                     if isempty(app.PeakHoldData) || length(app.PeakHoldData) ~= length(mag)
                         app.PeakHoldData = app.SmoothedFFT;
@@ -724,7 +848,7 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
                     end
                 end
 
-                % Update existing plot handles
+                % Refresh the existing FFT plot handles with new data
                 set(app.hFFTArea, 'XData', f, 'YData', app.SmoothedFFT);
 
                 if app.LivePeakHoldCheckbox.Value && ~isempty(app.PeakHoldData)
@@ -751,6 +875,7 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
             end
         end
 
+        % Return the exponential smoothing coefficient for the selected decay speed
         function alpha = getDecayAlpha(app)
             switch app.LiveDecayDropdown.Value
                 case 'Fast',   alpha = 0.55;
@@ -760,10 +885,48 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
             end
         end
 
+        % Reset the FFT peak hold envelope so it begins accumulating fresh data
         function clearPeaks(app)
             app.PeakHoldData = [];
         end
 
+        % Reset the sound level meter peak and minimum tracked values
+        function resetSPLPeakMin(app)
+            app.SPLPeakValue = -Inf;
+            app.SPLMinValue  = Inf;
+            app.SPLPeakValueLabel.Text = '--- dB';
+            app.SPLMinValueLabel.Text  = '--- dB';
+        end
+
+        % Apply A-weighting or C-weighting filter to an audio block.
+        % Returns the block unmodified when Z (flat) weighting is selected.
+        function out = applyWeighting(app, block, fs)
+            weightChoice = app.SPLWeightingDropdown.Value;
+            if contains(weightChoice, 'Z')
+                out = block;
+                return;
+            end
+        
+            f1 = 20.598997; f2 = 107.65265; f3 = 737.86223; f4 = 12194.217;
+            w1 = 2*pi*f1; w2 = 2*pi*f2; w3 = 2*pi*f3; w4 = 2*pi*f4;
+        
+            if contains(weightChoice, 'A')
+                z = [0; 0; 0; 0];
+                p = [-w1; -w1; -w4; -w4; -w2; -w3];
+                k = w4^2 * 10^(2/20);
+            else
+                z = [0; 0];
+                p = [-w1; -w1; -w4; -w4];
+                k = w4^2 * 10^(0.062/20);
+            end
+        
+            % Bilinear transform in zpk form avoids ill-conditioned polynomial math
+            [zd, pd, kd] = bilinear(z, p, k, fs);
+            [sos, g] = zp2sos(zd, pd, kd);
+            out = g * sosfilt(sos, block);
+        end
+
+        % Store the current recorder audio as a named sample in the session
         function saveSampleFromRecorder(app)
             try
                 data = getaudiodata(app.Recorder);
@@ -784,7 +947,8 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
             app.ProgressLabel.Text = sprintf('Saved: %s (%.1f s)', s.name, length(data)/fs);
         end
 
-        %% SPL CALIBRATION
+        % Perform SPL calibration by measuring a known reference tone and
+        % computing the offset between measured dBFS and the reference dB SPL
         function runSPLCalibration(app)
             if app.IsRecording || app.IsMonitoring
                 uialert(app.UIFigure, 'Stop recording/monitoring first.', 'Busy');
@@ -809,7 +973,8 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
             end
         end
 
-        %% MIC CAL FILE
+        % Load a microphone frequency response calibration file (two-column
+        % text with frequency and dB correction pairs)
         function loadCalFile(app)
             [file, path] = uigetfile({'*.cal;*.txt','Cal Files'}, 'Load Calibration');
             if isequal(file, 0), return; end
@@ -833,12 +998,15 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
             end
         end
 
+        % Remove the loaded calibration data and reset the display label
         function clearCal(app)
             app.CalFreq = []; app.CalDB = [];
             app.CalLoaded = false; app.CalFileName = "";
             app.CalFileLabel.Text = 'No file loaded';
         end
 
+        % Interpolate the calibration curve at the requested frequencies,
+        % returning zero correction when no calibration is loaded
         function c = getCalCorrection(app, f)
             if app.CalLoaded
                 c = interp1(app.CalFreq, app.CalDB, f, 'linear', 0);
@@ -847,7 +1015,7 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
             end
         end
 
-        %% SAMPLE MANAGEMENT
+        % Synchronise all sample list controls across tabs with current session data
         function updateSampleLists(app)
             if isempty(app.Samples) || (numel(app.Samples)==1 && isempty(app.Samples(1).name))
                 names = {}; raw = {};
@@ -864,6 +1032,7 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
             app.WFSampleDropdown.ItemsData = raw;
         end
 
+        % Prompt the user for a new name and rename the selected sample
         function renameSample(app)
             sel = app.SampleListBox.Value;
             if isempty(sel), return; end
@@ -877,6 +1046,7 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
             end
         end
 
+        % Remove the selected samples from the session
         function deleteSample(app)
             sel = app.SampleListBox.Value;
             if isempty(sel), return; end
@@ -888,6 +1058,7 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
             app.updateSampleLists();
         end
 
+        % Import one or more WAV files from disk as new session samples
         function importWav(app)
             [file, path] = uigetfile({'*.wav','WAV'}, 'Import', 'MultiSelect', 'on');
             if isequal(file, 0), return; end
@@ -907,7 +1078,7 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
             app.updateSampleLists();
         end
 
-        %% WINDOWING
+        % Generate a window function vector of length N for the given window name
         function w = getWindow(~, N, name)
             switch name
                 case 'Hanning',          w = hann(N);
@@ -919,7 +1090,7 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
             end
         end
 
-        %% FFT ANALYSIS
+        % Run FFT or Welch analysis on the selected samples and plot the results
         function analyzeButtonPushed(app)
             sel = app.AnalysisSampleListBox.Value;
             if isempty(sel), return; end
@@ -977,7 +1148,7 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
             hold(app.AnalysisAxes,'off');
         end
 
-        %% WATERFALL / SPECTROGRAM
+        % Generate a spectrogram, waterfall, or surface plot for the selected sample
         function waterfallPlot(app)
             selName = app.WFSampleDropdown.Value;
             if isempty(selName), return; end
@@ -1055,13 +1226,14 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
             end
         end
 
+        % Export the contents of any axes to a PNG or FIG file via save dialog
         function exportPlot(~, ax)
             [file, path] = uiputfile({'*.png','PNG';'*.fig','Figure'}, 'Export');
             if isequal(file,0), return; end
             exportgraphics(ax, fullfile(path,file), 'Resolution', 300);
         end
 
-        %% SESSION
+        % Save all session data (samples, calibration, SPL offset) to a MAT file
         function saveSession(app)
             [file,path] = uiputfile({'*.mat','Session'}, 'Save');
             if isequal(file,0), return; end
@@ -1072,6 +1244,7 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
             save(fullfile(path,file), '-struct', 'ses');
         end
 
+        % Restore a previously saved session from a MAT file
         function loadSession(app)
             [file,path] = uigetfile({'*.mat','Session'}, 'Load');
             if isequal(file,0), return; end
@@ -1089,7 +1262,7 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
             app.updateSampleLists();
         end
 
-        %% CLEANUP
+        % Clean up timers, stop recording, and close the figure on app exit
         function appCloseRequest(app)
             app.IsRecording = false; app.IsMonitoring = false;
             app.stopLiveTimer();

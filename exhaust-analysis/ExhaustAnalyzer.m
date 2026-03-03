@@ -773,7 +773,7 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
             fs = app.Recorder.SampleRate;
             if isempty(data), return; end
             app.SampleCount = app.SampleCount + 1;
-            s.name = sprintf('Sample_%d', app.SampleCount);
+            s.name = sprintf('Run_%d', app.SampleCount);
             s.data = data; s.fs = fs; s.timestamp = datetime('now');
             if isempty(app.Samples) || (numel(app.Samples)==1 && isempty(app.Samples(1).name))
                 app.Samples = s;
@@ -791,7 +791,7 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
                 return;
             end
             refSPL = app.SPLRefSpinner.Value;
-            app.SPLStatusLabel.Text = 'Measuring... hold calibrator steady (3 s)';
+            app.SPLStatusLabel.Text = 'Measuring (3 s)';
             drawnow;
             try
                 rec = app.makeRecorder(48000, 24);

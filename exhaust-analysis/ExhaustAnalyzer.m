@@ -115,6 +115,7 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
     properties (Access = private)
         Samples                 struct
         SampleCount             double = 0
+        SessionFile             string = ""    % full path of last saved/loaded session
 
         CalFreq                 double
         CalDB                   double
@@ -219,10 +220,10 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
             app.RecordStatusLamp = uilamp(app.MonitorTab, ...
                 'Position', [15 530 14 14], 'Color', [0.4 0.4 0.4]);
             app.RecordStatusLabel = uilabel(app.MonitorTab, 'Text', 'Idle', ...
-                'Position', [34 528 60 20], 'FontColor', [0.7 0.7 0.7], 'FontSize', 11);
+                'Position', [34 528 60 20], 'FontColor', [0.7 0.7 0.7], 'FontSize', 12);
             app.ProgressLabel = uilabel(app.MonitorTab, 'Text', '', ...
-                'Position', [100 528 235 20], 'FontColor', [0.9 0.85 0.6], ...
-                'FontWeight', 'bold', 'FontSize', 11);
+                'Position', [100 528 235 20], 'FontColor', [1 1 1], ...
+                'FontWeight', 'bold', 'FontSize', 12);
 
             % Microphone frequency response calibration panel
             app.CalPanel = uipanel(app.MonitorTab, 'Title', 'Mic Calibration', ...
@@ -580,8 +581,8 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
             hold(app.WaveformAxes, 'on');
             app.hWaveform = plot(app.WaveformAxes, 0, 0, ...
                 'Color', [0.3 0.7 1.0], 'LineWidth', 0.5);
-            app.hCursor = plot(app.WaveformAxes, [0 0], [-1 1], '--', ...
-                'Color', [1 0.35 0.15], 'LineWidth', 1.5, 'Visible', 'off');
+            app.hCursor = plot(app.WaveformAxes, [0 0], [-1 1], '-', ...
+                'Color', 'r', 'LineWidth', 1.5, 'Visible', 'off');
             hold(app.WaveformAxes, 'off');
             xlabel(app.WaveformAxes, 'Time (s)');
             ylabel(app.WaveformAxes, 'Amplitude');
@@ -692,7 +693,7 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
         % Create and start a periodic timer that drives the live display updates
         function startLiveTimer(app)
             app.LiveTimer = timer('ExecutionMode', 'fixedRate', ...
-                'Period', 0.20, ...
+                'Period', 0.10, ...
                 'BusyMode', 'drop', ...
                 'TimerFcn', @(~,~) liveUpdate(app));
             start(app.LiveTimer);
@@ -1232,34 +1233,69 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
             if isequal(file,0), return; end
             exportgraphics(ax, fullfile(path,file), 'Resolution', 300);
         end
-
+        
         % Save all session data (samples, calibration, SPL offset) to a MAT file
         function saveSession(app)
+            % If we already have a session filename, overwrite it silently
+            if strlength(app.SessionFile) > 0
+                ses.Samples = app.Samples; ses.SampleCount = app.SampleCount;
+                ses.CalFreq = app.CalFreq; ses.CalDB = app.CalDB;
+                ses.CalLoaded = app.CalLoaded; ses.CalFileName = app.CalFileName;
+                ses.SPLOffset = app.SPLOffset; ses.SPLCalibrated = app.SPLCalibrated;
+                try
+                    save(app.SessionFile, '-struct', 'ses');
+                    app.ProgressLabel.Text = sprintf('Saved session: %s', app.SessionFile);
+                catch ME
+                    uialert(app.UIFigure, ME.message, 'Save Error');
+                end
+                return;
+            end
+                    
+            % Otherwise prompt for filename and store it for future saves
             [file,path] = uiputfile({'*.mat','Session'}, 'Save');
             if isequal(file,0), return; end
-            ses.Samples=app.Samples; ses.SampleCount=app.SampleCount;
-            ses.CalFreq=app.CalFreq; ses.CalDB=app.CalDB;
-            ses.CalLoaded=app.CalLoaded; ses.CalFileName=app.CalFileName;
-            ses.SPLOffset=app.SPLOffset; ses.SPLCalibrated=app.SPLCalibrated;
-            save(fullfile(path,file), '-struct', 'ses');
+            app.SessionFile = fullfile(path,file);
+        
+            ses.Samples = app.Samples; ses.SampleCount = app.SampleCount;
+            ses.CalFreq = app.CalFreq; ses.CalDB = app.CalDB;
+            ses.CalLoaded = app.CalLoaded; ses.CalFileName = app.CalFileName;
+            ses.SPLOffset = app.SPLOffset; ses.SPLCalibrated = app.SPLCalibrated;
+            try
+                save(app.SessionFile, '-struct', 'ses');
+                app.ProgressLabel.Text = sprintf('Saved session: %s', app.SessionFile);
+            catch ME
+                uialert(app.UIFigure, ME.message, 'Save Error');
+            end
         end
 
         % Restore a previously saved session from a MAT file
         function loadSession(app)
             [file,path] = uigetfile({'*.mat','Session'}, 'Load');
             if isequal(file,0), return; end
-            ses = load(fullfile(path,file));
-            app.Samples=ses.Samples; app.SampleCount=ses.SampleCount;
+            fullpath = fullfile(path,file);
+            try
+                ses = load(fullpath);
+            catch ME
+                uialert(app.UIFigure, ME.message, 'Load Error');
+                return;
+            end
+            app.Samples = ses.Samples; 
+            app.SampleCount = ses.SampleCount;
             if isfield(ses,'CalLoaded') && ses.CalLoaded
-                app.CalFreq=ses.CalFreq; app.CalDB=ses.CalDB;
-                app.CalLoaded=true; app.CalFileName=ses.CalFileName;
+                app.CalFreq = ses.CalFreq; app.CalDB = ses.CalDB;
+                app.CalLoaded = true; app.CalFileName = ses.CalFileName;
                 app.CalFileLabel.Text = sprintf('Loaded: %s (%d pts)', app.CalFileName, numel(app.CalFreq));
             end
             if isfield(ses,'SPLCalibrated') && ses.SPLCalibrated
-                app.SPLOffset=ses.SPLOffset; app.SPLCalibrated=true;
+                app.SPLOffset = ses.SPLOffset; app.SPLCalibrated = true;
                 app.SPLStatusLabel.Text = sprintf('Done: offset %+.1f dB', app.SPLOffset);
             end
+        
+            % Remember the file so future Save overwrites without prompting
+            app.SessionFile = string(fullpath);   
+            
             app.updateSampleLists();
+            app.ProgressLabel.Text = sprintf('Loaded session: %s', fullpath);
         end
 
         % Clean up timers, stop recording, and close the figure on app exit

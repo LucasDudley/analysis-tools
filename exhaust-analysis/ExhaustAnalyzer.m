@@ -38,6 +38,9 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
         SPLCalibrateButton      matlab.ui.control.Button
         SPLStatusLabel          matlab.ui.control.Label
 
+        ManualOffsetLabel       matlab.ui.control.Label
+        ManualOffsetSpinner     matlab.ui.control.Spinner
+
         WaveformAxes            matlab.ui.control.UIAxes
         LiveFFTAxes             matlab.ui.control.UIAxes
 
@@ -250,18 +253,27 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
                 'BackgroundColor', [0.22 0.22 0.24], ...
                 'ForegroundColor', [0.9 0.9 0.9], 'FontWeight', 'bold');
 
+            % Top Row: Auto Calibration
             app.SPLRefLabel = uilabel(app.SPLCalPanel, 'Text', 'Ref dB:', ...
-                'Position', [10 38 45 22], 'FontColor', [0.85 0.85 0.85]);
+                'Position', [10 42 45 22], 'FontColor', [0.85 0.85 0.85]);
             app.SPLRefSpinner = uispinner(app.SPLCalPanel, ...
                 'Value', 94, 'Limits', [60 130], 'Step', 0.1, ...
-                'Position', [58 38 70 22]);
+                'Position', [58 42 70 22]);
             app.SPLCalibrateButton = uibutton(app.SPLCalPanel, 'push', ...
-                'Text', 'Calibrate Now', 'Position', [138 36 115 26], ...
+                'Text', 'Auto Calibrate', 'Position', [138 40 115 26], ...
                 'BackgroundColor', [0.5 0.35 0.15], 'FontColor', 'w', ...
                 'ButtonPushedFcn', @(~,~) runSPLCalibration(app));
-            app.SPLStatusLabel = uilabel(app.SPLCalPanel, 'Text', 'Not calibrated (relative dBFS)', ...
-                'Position', [10 10 295 20], 'FontColor', [0.62 0.62 0.62], 'FontSize', 11);
 
+            % Bottom Row: Manual Offset & Status
+            app.ManualOffsetLabel = uilabel(app.SPLCalPanel, 'Text', 'Manual Offset:', ...
+                'Position', [10 12 85 22], 'FontColor', [0.85 0.85 0.85]);
+            app.ManualOffsetSpinner = uispinner(app.SPLCalPanel, ...
+                'Value', 0, 'Limits', [-200 200], 'Step', 0.5, ...
+                'Position', [95 12 70 22], ...
+                'ValueChangedFcn', @(~,~) applyManualOffset(app));
+            
+            app.SPLStatusLabel = uilabel(app.SPLCalPanel, 'Text', 'Not calibrated', ...
+                'Position', [175 12 135 20], 'FontColor', [0.62 0.62 0.62], 'FontSize', 11);
             % Live FFT display controls
             app.LiveFFTPanel = uipanel(app.MonitorTab, 'Title', 'Live FFT Controls', ...
                 'Position', [12 145 panelW 175], ...
@@ -948,6 +960,8 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
             app.ProgressLabel.Text = sprintf('Saved: %s (%.1f s)', s.name, length(data)/fs);
         end
 
+        
+
         % Perform SPL calibration by measuring a known reference tone and
         % computing the offset between measured dBFS and the reference dB SPL
         function runSPLCalibration(app)
@@ -1296,6 +1310,13 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
             
             app.updateSampleLists();
             app.ProgressLabel.Text = sprintf('Loaded session: %s', fullpath);
+        end
+
+        function applyManualOffset(app)
+            val = app.ManualOffsetSpinner.Value;
+            app.SPLOffset = val;
+            app.SPLCalibrated = true;
+            app.SPLStatusLabel.Text = sprintf('Manual: %+.1f dB', app.SPLOffset);
         end
 
         % Clean up timers, stop recording, and close the figure on app exit

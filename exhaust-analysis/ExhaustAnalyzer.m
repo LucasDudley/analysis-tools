@@ -122,6 +122,7 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
 
         CalFreq                 double
         CalDB                   double
+        CalPhase                double         % phase response (degrees) from calibration file
         CalLoaded               logical = false
         CalFileName             string = ""
         SPLOffset               double = 0
@@ -199,7 +200,7 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
             app.DurationLabel = uilabel(app.SetupPanel, 'Text', 'Duration (s):', ...
                 'Position', [10 yy 80 22], 'FontColor', [0.85 0.85 0.85]);
             app.DurationSpinner = uispinner(app.SetupPanel, ...
-                'Value', 15, 'Limits', [1 600], 'Step', 5, ...
+                'Value', 40, 'Limits', [1 600], 'Step', 5, ...
                 'Position', [95 yy 80 22]);
 
             yy = yy - 38;
@@ -235,7 +236,7 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
                 'ForegroundColor', [0.9 0.9 0.9], 'FontWeight', 'bold');
 
             app.LoadCalButton = uibutton(app.CalPanel, 'push', ...
-                'Text', 'Load .cal / .txt', 'Position', [10 55 120 24], ...
+                'Text', 'Load Cal File', 'Position', [10 55 120 24], ...
                 'BackgroundColor', [0.3 0.3 0.5], 'FontColor', 'w', ...
                 'ButtonPushedFcn', @(~,~) loadCalFile(app));
             app.ClearCalButton = uibutton(app.CalPanel, 'push', ...
@@ -495,7 +496,7 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
                 'Position', [10 yy 30 22], 'FontColor', [0.85 0.85 0.85]);
             app.WFFFTSizeDropdown = uidropdown(app.WFPanel, ...
                 'Items', {'1024','2048','4096','8192','16384'}, ...
-                'Value', '4096', 'Position', [65 yy 100 22]);
+                'Value', '8192', 'Position', [65 yy 100 22]);
 
             yy = yy - 30;
             app.WFOverlapLabel = uilabel(app.WFPanel, 'Text', 'Overlap %:', ...
@@ -508,7 +509,7 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
             app.WFMaxFreqLabel = uilabel(app.WFPanel, 'Text', 'Max Hz:', ...
                 'Position', [10 yy 50 22], 'FontColor', [0.85 0.85 0.85]);
             app.WFMaxFreqSpinner = uispinner(app.WFPanel, ...
-                'Value', 5000, 'Limits', [100 20000], 'Step', 500, ...
+                'Value', 2000, 'Limits', [100 20000], 'Step', 500, ...
                 'Position', [65 yy 95 22]);
 
             yy = yy - 30;
@@ -988,34 +989,119 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
             end
         end
 
-        % Load a microphone frequency response calibration file (two-column
-        % text with frequency and dB correction pairs)
+        % Load a microphone frequency response calibration file.
+        % Supports multiple formats:
+        %   .ods / .xlsx / .csv  - Spreadsheet with Hz, dB, Phase columns
+        %   .cal / .txt          - Two-column text (frequency, dB correction)
         function loadCalFile(app)
-            [file, path] = uigetfile({'*.cal;*.txt','Cal Files'}, 'Load Calibration');
+            [file, path] = uigetfile({ ...
+                '*.ods;*.xlsx;*.csv;*.cal;*.txt', 'All Calibration Files (*.ods,*.xlsx,*.csv,*.cal,*.txt)'; ...
+                '*.ods',  'OpenDocument Spreadsheet (*.ods)'; ...
+                '*.xlsx', 'Excel Spreadsheet (*.xlsx)'; ...
+                '*.csv',  'CSV File (*.csv)'; ...
+                '*.cal;*.txt', 'Text Cal Files (*.cal, *.txt)'; ...
+                '*.*', 'All Files (*.*)'}, ...
+                'Load Calibration');
             if isequal(file, 0), return; end
+
+            fullpath = fullfile(path, file);
+            [~, ~, ext] = fileparts(file);
+            ext = lower(ext);
+
             try
-                raw = fileread(fullfile(path, file));
-                lines = strsplit(raw, {'\n','\r'});
-                freqs = []; dbs = [];
-                for i = 1:numel(lines)
-                    s = strtrim(lines{i});
-                    if isempty(s) || any(s(1) == '*;#"'), continue; end
-                    nums = sscanf(s, '%f %f');
-                    if numel(nums) >= 2
-                        freqs(end+1) = nums(1); dbs(end+1) = nums(2); %#ok<AGROW>
-                    end
+                switch ext
+                    case {'.ods', '.xlsx', '.xls', '.csv'}
+                        % Read spreadsheet formats using readtable for
+                        % robust header and data type detection
+                        T = readtable(fullpath);
+
+                        % Identify columns by header name or fall back to
+                        % positional order (Hz, dB, Phase)
+                        colNames = lower(T.Properties.VariableNames);
+
+                        % Find frequency column
+                        freqCol = find(contains(colNames, 'hz') | ...
+                                       contains(colNames, 'freq'), 1);
+                        if isempty(freqCol), freqCol = 1; end
+
+                        % Find dB column
+                        dbCol = find(contains(colNames, 'db') | ...
+                                     contains(colNames, 'mag') | ...
+                                     contains(colNames, 'level') | ...
+                                     contains(colNames, 'sens'), 1);
+                        if isempty(dbCol), dbCol = 2; end
+
+                        % Find phase column (optional)
+                        phaseCol = find(contains(colNames, 'phase') | ...
+                                        contains(colNames, 'deg'), 1);
+                        if isempty(phaseCol) && width(T) >= 3
+                            phaseCol = 3;
+                        end
+
+                        freqs = T{:, freqCol};
+                        dbs   = T{:, dbCol};
+
+                        % Convert to numeric if the table read them as
+                        % strings or cell arrays (common with ODS files)
+                        if iscell(freqs), freqs = cellfun(@str2double, freqs); end
+                        if iscell(dbs),   dbs   = cellfun(@str2double, dbs);   end
+
+                        % Remove any rows that failed to parse
+                        valid = ~isnan(freqs) & ~isnan(dbs);
+                        freqs = freqs(valid);
+                        dbs   = dbs(valid);
+
+                        % Read phase data if available
+                        if ~isempty(phaseCol)
+                            phases = T{:, phaseCol};
+                            if iscell(phases), phases = cellfun(@str2double, phases); end
+                            phases = phases(valid);
+                            app.CalPhase = phases(:);
+                        else
+                            app.CalPhase = [];
+                        end
+
+                        app.CalFreq = freqs(:);
+                        app.CalDB   = dbs(:);
+                        app.CalLoaded = true;
+                        app.CalFileName = file;
+                        nPts = numel(freqs);
+
+                        if ~isempty(app.CalPhase)
+                            app.CalFileLabel.Text = sprintf('Loaded: %s (%d pts, +phase)', file, nPts);
+                        else
+                            app.CalFileLabel.Text = sprintf('Loaded: %s (%d pts)', file, nPts);
+                        end
+
+                    otherwise
+                        % Legacy text/cal file parser (two-column: freq dB)
+                        raw = fileread(fullpath);
+                        lines = strsplit(raw, {'\n','\r'});
+                        freqs = []; dbs = [];
+                        for i = 1:numel(lines)
+                            s = strtrim(lines{i});
+                            if isempty(s) || any(s(1) == '*;#"'), continue; end
+                            nums = sscanf(s, '%f %f');
+                            if numel(nums) >= 2
+                                freqs(end+1) = nums(1); dbs(end+1) = nums(2); %#ok<AGROW>
+                            end
+                        end
+                        app.CalFreq = freqs(:); app.CalDB = dbs(:);
+                        app.CalPhase = [];
+                        app.CalLoaded = true; app.CalFileName = file;
+                        app.CalFileLabel.Text = sprintf('Loaded: %s (%d pts)', file, numel(freqs));
                 end
-                app.CalFreq = freqs(:); app.CalDB = dbs(:);
-                app.CalLoaded = true; app.CalFileName = file;
-                app.CalFileLabel.Text = sprintf('Loaded: %s (%d pts)', file, numel(freqs));
+
             catch ME
-                uialert(app.UIFigure, ME.message, 'Cal File Error');
+                uialert(app.UIFigure, ...
+                    sprintf('Failed to read "%s":\n%s', file, ME.message), ...
+                    'Cal File Error');
             end
         end
 
         % Remove the loaded calibration data and reset the display label
         function clearCal(app)
-            app.CalFreq = []; app.CalDB = [];
+            app.CalFreq = []; app.CalDB = []; app.CalPhase = [];
             app.CalLoaded = false; app.CalFileName = "";
             app.CalFileLabel.Text = 'No file loaded';
         end
@@ -1027,6 +1113,16 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
                 c = interp1(app.CalFreq, app.CalDB, f, 'linear', 0);
             else
                 c = zeros(size(f));
+            end
+        end
+
+        % Interpolate the calibration phase curve at the requested frequencies,
+        % returning zero when no phase data is available
+        function p = getCalPhaseCorrection(app, f)
+            if app.CalLoaded && ~isempty(app.CalPhase)
+                p = interp1(app.CalFreq, app.CalPhase, f, 'linear', 0);
+            else
+                p = zeros(size(f));
             end
         end
 
@@ -1254,6 +1350,7 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
             if strlength(app.SessionFile) > 0
                 ses.Samples = app.Samples; ses.SampleCount = app.SampleCount;
                 ses.CalFreq = app.CalFreq; ses.CalDB = app.CalDB;
+                ses.CalPhase = app.CalPhase;
                 ses.CalLoaded = app.CalLoaded; ses.CalFileName = app.CalFileName;
                 ses.SPLOffset = app.SPLOffset; ses.SPLCalibrated = app.SPLCalibrated;
                 try
@@ -1272,6 +1369,7 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
         
             ses.Samples = app.Samples; ses.SampleCount = app.SampleCount;
             ses.CalFreq = app.CalFreq; ses.CalDB = app.CalDB;
+            ses.CalPhase = app.CalPhase;
             ses.CalLoaded = app.CalLoaded; ses.CalFileName = app.CalFileName;
             ses.SPLOffset = app.SPLOffset; ses.SPLCalibrated = app.SPLCalibrated;
             try
@@ -1299,6 +1397,16 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
                 app.CalFreq = ses.CalFreq; app.CalDB = ses.CalDB;
                 app.CalLoaded = true; app.CalFileName = ses.CalFileName;
                 app.CalFileLabel.Text = sprintf('Loaded: %s (%d pts)', app.CalFileName, numel(app.CalFreq));
+                % Restore phase data if it was saved
+                if isfield(ses, 'CalPhase')
+                    app.CalPhase = ses.CalPhase;
+                    if ~isempty(app.CalPhase)
+                        app.CalFileLabel.Text = sprintf('Loaded: %s (%d pts, +phase)', ...
+                            app.CalFileName, numel(app.CalFreq));
+                    end
+                else
+                    app.CalPhase = [];
+                end
             end
             if isfield(ses,'SPLCalibrated') && ses.SPLCalibrated
                 app.SPLOffset = ses.SPLOffset; app.SPLCalibrated = true;

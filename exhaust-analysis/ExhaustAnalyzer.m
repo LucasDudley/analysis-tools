@@ -81,7 +81,6 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
 
         AnalysisTab             matlab.ui.container.Tab
         AnalysisPanel           matlab.ui.container.Panel
-        AnalysisSampleListBox   matlab.ui.control.ListBox
         FFTSizeDropdown         matlab.ui.control.DropDown
         FFTSizeLabel            matlab.ui.control.Label
         WindowDropdown          matlab.ui.control.DropDown
@@ -94,6 +93,20 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
         FreqScaleSwitch         matlab.ui.control.Switch
         FreqScaleLabel          matlab.ui.control.Label
         AnalysisAxes            matlab.ui.control.UIAxes
+
+        % Analysis entries panel: build a list of sample+trim combos to plot
+        EntriesPanel            matlab.ui.container.Panel
+        EntrySampleDropdown     matlab.ui.control.DropDown
+        EntrySampleLabel        matlab.ui.control.Label
+        EntryStartSpinner       matlab.ui.control.Spinner
+        EntryStartLabel         matlab.ui.control.Label
+        EntryEndSpinner         matlab.ui.control.Spinner
+        EntryEndLabel           matlab.ui.control.Label
+        AddEntryButton          matlab.ui.control.Button
+        RemoveEntryButton       matlab.ui.control.Button
+        ClearEntriesButton      matlab.ui.control.Button
+        AddAllButton            matlab.ui.control.Button
+        EntriesListBox          matlab.ui.control.ListBox
 
         WaterfallTab            matlab.ui.container.Tab
         WFPanel                 matlab.ui.container.Panel
@@ -110,6 +123,10 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
         WFDbRangeSpinner        matlab.ui.control.Spinner
         WFDbRangeLabel          matlab.ui.control.Label
         WFApplyCalCheckbox      matlab.ui.control.CheckBox
+        WFTrimStartSpinner      matlab.ui.control.Spinner
+        WFTrimStartLabel        matlab.ui.control.Label
+        WFTrimEndSpinner        matlab.ui.control.Spinner
+        WFTrimEndLabel          matlab.ui.control.Label
         WFPlotButton            matlab.ui.control.Button
         WFExportButton          matlab.ui.control.Button
         WFAxes                  matlab.ui.control.UIAxes
@@ -148,6 +165,10 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
         % Sound level meter state
         SPLPeakValue            double = -Inf   % highest observed dB reading
         SPLMinValue             double = Inf    % lowest observed dB reading
+
+        % Per-sample trim and level storage for the analysis queue.
+        % Each element is a struct with fields: name, tStart, tEnd, dB
+        AnalysisEntries         struct
     end
 
     methods (Access = private)
@@ -409,58 +430,109 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
             app.AnalysisTab = uitab(app.TabGroup, 'Title', '  FFT Analysis  ', ...
                 'BackgroundColor', [0.18 0.18 0.20]);
 
-            app.AnalysisPanel = uipanel(app.AnalysisTab, 'Title', 'Settings', ...
-                'Position', [12 350 275 400], ...
+            % Settings panel
+            app.AnalysisPanel = uipanel(app.AnalysisTab, 'Title', 'FFT Settings', ...
+                'Position', [12 540 275 220], ...
                 'BackgroundColor', [0.22 0.22 0.24], ...
                 'ForegroundColor', [0.9 0.9 0.9], 'FontWeight', 'bold');
 
-            uilabel(app.AnalysisPanel, 'Text', 'Samples (multi-select):', ...
-                'Position', [10 345 200 22], 'FontColor', [0.85 0.85 0.85]);
-            app.AnalysisSampleListBox = uilistbox(app.AnalysisPanel, ...
-                'Items', {}, 'Position', [10 210 250 135], 'Multiselect', 'on');
-
-            yy = 178;
+            yy = 170;
             app.FFTSizeLabel = uilabel(app.AnalysisPanel, 'Text', 'FFT:', ...
                 'Position', [10 yy 30 22], 'FontColor', [0.85 0.85 0.85]);
             app.FFTSizeDropdown = uidropdown(app.AnalysisPanel, ...
                 'Items', {'1024','2048','4096','8192','16384','32768','65536'}, ...
                 'Value', '8192', 'Position', [45 yy 90 22]);
 
-            yy = yy - 28;
+            yy = yy - 26;
             app.WindowLabel = uilabel(app.AnalysisPanel, 'Text', 'Win:', ...
                 'Position', [10 yy 30 22], 'FontColor', [0.85 0.85 0.85]);
             app.WindowDropdown = uidropdown(app.AnalysisPanel, ...
                 'Items', {'Hanning','Hamming','Blackman-Harris','Flat Top','Rectangular'}, ...
                 'Value', 'Hanning', 'Position', [45 yy 155 22]);
 
-            yy = yy - 28;
+            yy = yy - 26;
             app.AveragingLabel = uilabel(app.AnalysisPanel, 'Text', 'Method:', ...
                 'Position', [10 yy 45 22], 'FontColor', [0.85 0.85 0.85]);
             app.AveragingDropdown = uidropdown(app.AnalysisPanel, ...
                 'Items', {'Welch (Averaged)','Raw FFT'}, ...
                 'Value', 'Welch (Averaged)', 'Position', [60 yy 145 22]);
 
-            yy = yy - 28;
+            yy = yy - 26;
             app.OverlayCheckbox = uicheckbox(app.AnalysisPanel, ...
-                'Text', 'Overlay all selected', 'Value', true, ...
-                'Position', [10 yy 170 22], 'FontColor', [0.85 0.85 0.85]);
-
-            yy = yy - 28;
+                'Text', 'Overlay all', 'Value', true, ...
+                'Position', [10 yy 90 22], 'FontColor', [0.85 0.85 0.85]);
             app.FreqScaleLabel = uilabel(app.AnalysisPanel, 'Text', 'Scale:', ...
-                'Position', [10 yy 38 22], 'FontColor', [0.85 0.85 0.85]);
+                'Position', [110 yy 38 22], 'FontColor', [0.85 0.85 0.85]);
             app.FreqScaleSwitch = uiswitch(app.AnalysisPanel, 'slider', ...
                 'Items', {'Linear','Log'}, 'Value', 'Log', ...
-                'Position', [85 yy 45 20]);
+                'Position', [186 yy 45 20]);
 
-            yy = yy - 38;
+            yy = yy - 36;
             app.AnalyzeButton = uibutton(app.AnalysisPanel, 'push', ...
-                'Text', 'Analyze', 'Position', [10 yy 110 32], ...
+                'Text', 'Analyze', 'Position', [10 yy 125 30], ...
                 'BackgroundColor', [0.2 0.45 0.7], 'FontColor', 'w', ...
                 'FontWeight', 'bold', 'FontSize', 13, ...
                 'ButtonPushedFcn', @(~,~) analyzeButtonPushed(app));
             app.ExportAnalysisButton = uibutton(app.AnalysisPanel, 'push', ...
-                'Text', 'Export', 'Position', [130 yy 100 32], ...
+                'Text', 'Export', 'Position', [145 yy 110 30], ...
                 'ButtonPushedFcn', @(~,~) exportPlot(app, app.AnalysisAxes));
+
+            % --- Analysis entries panel (build comparison list) ---
+            app.EntriesPanel = uipanel(app.AnalysisTab, 'Title', 'Analysis Entries', ...
+                'Position', [12 10 275 524], ...
+                'BackgroundColor', [0.22 0.22 0.24], ...
+                'ForegroundColor', [0.9 0.9 0.9], 'FontWeight', 'bold');
+
+            yy = 478;
+            app.EntrySampleLabel = uilabel(app.EntriesPanel, 'Text', 'Sample:', ...
+                'Position', [10 yy 50 22], 'FontColor', [0.85 0.85 0.85]);
+            app.EntrySampleDropdown = uidropdown(app.EntriesPanel, ...
+                'Items', {}, 'Position', [65 yy 192 22], ...
+                'ValueChangedFcn', @(~,~) onEntrySampleChanged(app));
+
+            yy = yy - 28;
+            app.EntryStartLabel = uilabel(app.EntriesPanel, 'Text', 'Start (s):', ...
+                'Position', [10 yy 55 22], 'FontColor', [0.85 0.85 0.85]);
+            app.EntryStartSpinner = uispinner(app.EntriesPanel, ...
+                'Value', 0, 'Limits', [0 9999], 'Step', 0.1, ...
+                'Position', [68 yy 65 22], ...
+                'ValueDisplayFormat', '%.1f');
+            app.EntryEndLabel = uilabel(app.EntriesPanel, 'Text', 'End (s):', ...
+                'Position', [141 yy 48 22], 'FontColor', [0.85 0.85 0.85]);
+            app.EntryEndSpinner = uispinner(app.EntriesPanel, ...
+                'Value', 0, 'Limits', [0 9999], 'Step', 0.1, ...
+                'Position', [192 yy 65 22], ...
+                'ValueDisplayFormat', '%.1f');
+
+            yy = yy - 30;
+            app.AddEntryButton = uibutton(app.EntriesPanel, 'push', ...
+                'Text', '+ Add', 'Position', [10 yy 80 26], ...
+                'BackgroundColor', [0.3 0.52 0.3], 'FontColor', 'w', ...
+                'FontWeight', 'bold', ...
+                'ButtonPushedFcn', @(~,~) addEntry(app));
+            app.AddAllButton = uibutton(app.EntriesPanel, 'push', ...
+                'Text', '+ Add All', 'Position', [94 yy 80 26], ...
+                'BackgroundColor', [0.28 0.42 0.28], 'FontColor', 'w', ...
+                'ButtonPushedFcn', @(~,~) addAllEntries(app));
+
+            yy = yy - 28;
+            app.RemoveEntryButton = uibutton(app.EntriesPanel, 'push', ...
+                'Text', 'Remove Selected', 'Position', [10 yy 125 24], ...
+                'FontSize', 11, ...
+                'ButtonPushedFcn', @(~,~) removeEntry(app));
+            app.ClearEntriesButton = uibutton(app.EntriesPanel, 'push', ...
+                'Text', 'Clear All', 'Position', [142 yy 115 24], ...
+                'FontSize', 11, ...
+                'ButtonPushedFcn', @(~,~) clearEntries(app));
+
+            yy = yy - 22;
+            uilabel(app.EntriesPanel, 'Text', 'Queued for analysis:', ...
+                'Position', [10 yy 250 18], 'FontColor', [0.58 0.58 0.58], 'FontSize', 10);
+
+            app.EntriesListBox = uilistbox(app.EntriesPanel, ...
+                'Items', {'(empty - add entries above)'}, ...
+                'Position', [10 10 250 yy-8], ...
+                'FontName', 'Consolas', 'FontSize', 11);
 
             app.AnalysisAxes = uiaxes(app.AnalysisTab, ...
                 'Position', [300 20 1000 760]);
@@ -474,11 +546,11 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
                 'BackgroundColor', [0.18 0.18 0.20]);
 
             app.WFPanel = uipanel(app.WaterfallTab, 'Title', 'Settings', ...
-                'Position', [12 400 260 360], ...
+                'Position', [12 370 260 395], ...
                 'BackgroundColor', [0.22 0.22 0.24], ...
                 'ForegroundColor', [0.9 0.9 0.9], 'FontWeight', 'bold');
 
-            yy = 305;
+            yy = 340;
             app.WFSampleLabel = uilabel(app.WFPanel, 'Text', 'Sample:', ...
                 'Position', [10 yy 50 22], 'FontColor', [0.85 0.85 0.85]);
             app.WFSampleDropdown = uidropdown(app.WFPanel, ...
@@ -523,6 +595,18 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
             app.WFApplyCalCheckbox = uicheckbox(app.WFPanel, ...
                 'Text', 'Apply Calibration', 'Value', true, ...
                 'Position', [10 yy 150 22], 'FontColor', [0.85 0.85 0.85]);
+
+            yy = yy - 28;
+            app.WFTrimStartLabel = uilabel(app.WFPanel, 'Text', 'Start (s):', ...
+                'Position', [10 yy 55 22], 'FontColor', [0.85 0.85 0.85]);
+            app.WFTrimStartSpinner = uispinner(app.WFPanel, ...
+                'Value', 0, 'Limits', [0 9999], 'Step', 0.5, ...
+                'Position', [70 yy 60 22]);
+            app.WFTrimEndLabel = uilabel(app.WFPanel, 'Text', 'End (s):', ...
+                'Position', [138 yy 45 22], 'FontColor', [0.85 0.85 0.85]);
+            app.WFTrimEndSpinner = uispinner(app.WFPanel, ...
+                'Value', 0, 'Limits', [0 9999], 'Step', 0.5, ...
+                'Position', [186 yy 60 22]);
 
             yy = yy - 35;
             app.WFPlotButton = uibutton(app.WFPanel, 'push', ...
@@ -1137,10 +1221,12 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
             end
             app.SampleListBox.Items = names;
             app.SampleListBox.ItemsData = raw;
-            app.AnalysisSampleListBox.Items = names;
-            app.AnalysisSampleListBox.ItemsData = raw;
             app.WFSampleDropdown.Items = names;
             app.WFSampleDropdown.ItemsData = raw;
+
+            % Sync the analysis entry sample dropdown
+            app.EntrySampleDropdown.Items = names;
+            app.EntrySampleDropdown.ItemsData = raw;
         end
 
         % Prompt the user for a new name and rename the selected sample
@@ -1152,8 +1238,15 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
             if isempty(idx), return; end
             newName = inputdlg('New name:', 'Rename', [1 40], {sel});
             if ~isempty(newName) && ~isempty(newName{1})
+                % Update any analysis entries referencing the old name
+                for k = 1:numel(app.AnalysisEntries)
+                    if strcmp(app.AnalysisEntries(k).name, sel)
+                        app.AnalysisEntries(k).name = newName{1};
+                    end
+                end
                 app.Samples(idx).name = newName{1};
                 app.updateSampleLists();
+                app.refreshEntriesListBox();
             end
         end
 
@@ -1164,9 +1257,17 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
             if ~iscell(sel), sel = {sel}; end
             for i = 1:numel(sel)
                 idx = find(strcmp({app.Samples.name}, sel{i}), 1);
-                if ~isempty(idx), app.Samples(idx) = []; end
+                if ~isempty(idx)
+                    app.Samples(idx) = [];
+                end
+                % Remove any analysis entries referencing this sample
+                if ~isempty(app.AnalysisEntries)
+                    keep = ~strcmp({app.AnalysisEntries.name}, sel{i});
+                    app.AnalysisEntries = app.AnalysisEntries(keep);
+                end
             end
             app.updateSampleLists();
+            app.refreshEntriesListBox();
         end
 
         % Import one or more WAV files from disk as new session samples
@@ -1201,26 +1302,142 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
             end
         end
 
-        % Run FFT or Welch analysis on the selected samples and plot the results
+        % When the entry sample dropdown changes, auto-fill End spinner
+        % with the sample's full duration so the user can see the range
+        function onEntrySampleChanged(app)
+            selName = app.EntrySampleDropdown.Value;
+            if isempty(selName), return; end
+            idx = find(strcmp({app.Samples.name}, selName), 1);
+            if ~isempty(idx)
+                dur = length(app.Samples(idx).data) / app.Samples(idx).fs;
+                app.EntryEndSpinner.Value = round(dur, 1);
+                app.EntryStartSpinner.Value = 0;
+            end
+        end
+
+        % Add the current sample + time window as a new entry in the queue
+        function addEntry(app)
+            selName = app.EntrySampleDropdown.Value;
+            if isempty(selName), return; end
+            e.name   = selName;
+            e.tStart = app.EntryStartSpinner.Value;
+            e.tEnd   = app.EntryEndSpinner.Value;
+            e.dB     = NaN;
+            if isempty(app.AnalysisEntries) || ...
+               (numel(app.AnalysisEntries)==1 && isempty(app.AnalysisEntries(1).name))
+                app.AnalysisEntries = e;
+            else
+                app.AnalysisEntries(end+1) = e;
+            end
+            app.refreshEntriesListBox();
+        end
+
+        % Add all session samples as full-duration entries in one click
+        function addAllEntries(app)
+            if isempty(app.Samples), return; end
+            for i = 1:numel(app.Samples)
+                if isempty(app.Samples(i).name), continue; end
+                e.name   = app.Samples(i).name;
+                e.tStart = 0;
+                e.tEnd   = round(length(app.Samples(i).data)/app.Samples(i).fs, 1);
+                e.dB     = NaN;
+                if isempty(app.AnalysisEntries) || ...
+                   (numel(app.AnalysisEntries)==1 && isempty(app.AnalysisEntries(1).name))
+                    app.AnalysisEntries = e;
+                else
+                    app.AnalysisEntries(end+1) = e;
+                end
+            end
+            app.refreshEntriesListBox();
+        end
+
+        % Remove the currently selected entry from the queue
+        function removeEntry(app)
+            sel = app.EntriesListBox.Value;
+            if isempty(sel) || isempty(app.AnalysisEntries), return; end
+            % Value holds the index as ItemsData
+            if iscell(sel), sel = sel{1}; end
+            idx = sel;
+            if idx >= 1 && idx <= numel(app.AnalysisEntries)
+                app.AnalysisEntries(idx) = [];
+            end
+            app.refreshEntriesListBox();
+        end
+
+        % Remove all entries from the analysis queue
+        function clearEntries(app)
+            app.AnalysisEntries = struct('name',{},'tStart',{},'tEnd',{},'dB',{});
+            app.refreshEntriesListBox();
+        end
+
+        % Rebuild the entries listbox display from the current queue
+        function refreshEntriesListBox(app)
+            if isempty(app.AnalysisEntries)
+                app.EntriesListBox.Items = {'(empty - add entries above)'};
+                app.EntriesListBox.ItemsData = {};
+                return;
+            end
+            items = cell(1, numel(app.AnalysisEntries));
+            idxs = cell(1, numel(app.AnalysisEntries));
+            for i = 1:numel(app.AnalysisEntries)
+                e = app.AnalysisEntries(i);
+                if isnan(e.dB)
+                    dbStr = '';
+                else
+                    dbStr = sprintf('  %.1f dB', e.dB);
+                end
+                items{i} = sprintf('%s  %.1f-%.1fs%s', e.name, e.tStart, e.tEnd, dbStr);
+                idxs{i}  = i;
+            end
+            app.EntriesListBox.Items = items;
+            app.EntriesListBox.ItemsData = [idxs{:}];
+        end
+
+        % Run FFT or Welch analysis on the entries in the queue and plot results.
+        % Computes broadband dB for each entry and shows it in the legend.
         function analyzeButtonPushed(app)
-            sel = app.AnalysisSampleListBox.Value;
-            if isempty(sel), return; end
-            if ~iscell(sel), sel = {sel}; end
+            if isempty(app.AnalysisEntries)
+                uialert(app.UIFigure, ...
+                    'Add one or more entries using the panel on the left.', ...
+                    'No Entries');
+                return;
+            end
 
-            nfft = str2double(app.FFTSizeDropdown.Value);
+            nfft    = str2double(app.FFTSizeDropdown.Value);
             winName = app.WindowDropdown.Value;
-            applyCal = app.ApplyCalGlobalCheckbox.Value && app.CalLoaded;
+            applyCal  = app.ApplyCalGlobalCheckbox.Value && app.CalLoaded;
             doOverlay = app.OverlayCheckbox.Value;
-            useLog = strcmp(app.FreqScaleSwitch.Value, 'Log');
-            method = app.AveragingDropdown.Value;
+            useLog    = strcmp(app.FreqScaleSwitch.Value, 'Log');
+            method    = app.AveragingDropdown.Value;
 
+            nEntries = numel(app.AnalysisEntries);
             cla(app.AnalysisAxes); hold(app.AnalysisAxes, 'on');
-            colors = lines(numel(sel)); legs = {};
+            colors = lines(nEntries); legs = {};
 
-            for i = 1:numel(sel)
-                idx = find(strcmp({app.Samples.name}, sel{i}), 1);
+            for i = 1:nEntries
+                e = app.AnalysisEntries(i);
+                idx = find(strcmp({app.Samples.name}, e.name), 1);
                 if isempty(idx), continue; end
                 data = app.Samples(idx).data; fs = app.Samples(idx).fs;
+
+                % Apply per-entry time trim
+                totalDur = length(data) / fs;
+                tStart = max(0, min(e.tStart, totalDur));
+                tEnd   = min(e.tEnd, totalDur);
+                if tEnd <= tStart, tEnd = totalDur; end
+                sStart = round(tStart * fs) + 1;
+                sEnd   = min(round(tEnd * fs), length(data));
+                if sStart < sEnd
+                    data = data(sStart:sEnd);
+                end
+
+                % Compute broadband RMS level of the trimmed segment
+                rmsVal  = rms(data);
+                levelDB = 20*log10(rmsVal + eps);
+                if app.SPLCalibrated, levelDB = levelDB + app.SPLOffset; end
+
+                % Store the computed dB back into the entry
+                app.AnalysisEntries(i).dB = levelDB;
 
                 if contains(method, 'Welch')
                     w = app.getWindow(nfft, winName);
@@ -1238,8 +1455,17 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
                 if applyCal, mag = mag + app.getCalCorrection(f); end
 
                 if ~doOverlay && i>1, cla(app.AnalysisAxes); hold(app.AnalysisAxes,'on'); end
+
+                % Build legend: name [trim range] (dB level)
+                if app.SPLCalibrated
+                    unit = 'dB SPL';
+                else
+                    unit = 'dBFS';
+                end
+                legLabel = sprintf('%s [%.1f-%.1fs] (%.1f %s)', ...
+                    e.name, tStart, tEnd, levelDB, unit);
                 plot(app.AnalysisAxes, f, mag, 'Color', colors(i,:), 'LineWidth', 1.3);
-                legs{end+1} = app.Samples(idx).name; %#ok<AGROW>
+                legs{end+1} = legLabel; %#ok<AGROW>
             end
 
             if useLog
@@ -1255,8 +1481,11 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
             end
             title(app.AnalysisAxes, 'Frequency Spectrum');
             legend(app.AnalysisAxes, legs, 'TextColor',[0.85 0.85 0.85], ...
-                'Color',[0.2 0.2 0.22], 'Location','northeast');
+                'Color',[0.2 0.2 0.22], 'Location','northeast', 'Interpreter', 'none');
             hold(app.AnalysisAxes,'off');
+
+            % Refresh the entries list to show computed dB values
+            app.refreshEntriesListBox();
         end
 
         % Generate a spectrogram, waterfall, or surface plot for the selected sample
@@ -1267,6 +1496,25 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
             if isempty(idx), return; end
 
             data = app.Samples(idx).data; fs = app.Samples(idx).fs;
+
+            % Apply time trim from the waterfall trim spinners
+            wfTrimStart = app.WFTrimStartSpinner.Value;
+            wfTrimEnd   = app.WFTrimEndSpinner.Value;
+            totalDur = length(data) / fs;
+            if wfTrimStart > 0 || (wfTrimEnd > 0 && wfTrimEnd < totalDur)
+                tStart = max(0, min(wfTrimStart, totalDur));
+                if wfTrimEnd <= tStart
+                    tEnd = totalDur;
+                else
+                    tEnd = min(wfTrimEnd, totalDur);
+                end
+                sStart = round(tStart * fs) + 1;
+                sEnd   = min(round(tEnd * fs), length(data));
+                if sStart < sEnd
+                    data = data(sStart:sEnd);
+                end
+            end
+
             nfft = str2double(app.WFFFTSizeDropdown.Value);
             noverlap = round(nfft * app.WFOverlapSpinner.Value/100);
             maxFreq = app.WFMaxFreqSpinner.Value;
@@ -1439,6 +1687,7 @@ classdef ExhaustAnalyzer < matlab.apps.AppBase
     methods (Access = public)
         function app = ExhaustAnalyzer()
             app.Samples = struct('name',{},'data',{},'fs',{},'timestamp',{});
+            app.AnalysisEntries = struct('name',{},'tStart',{},'tEnd',{},'dB',{});
             createComponents(app);
             app.UIFigure.Visible = 'on';
         end
